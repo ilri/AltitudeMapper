@@ -21,6 +21,8 @@ class Process:
 
 
 
+
+
     # The records are many. The function below break the records into small manageable chunks
     def chunk(self,input_list, chunk_size):
         return [input_list[i:i + chunk_size] for i in range(0, len(input_list), chunk_size)]
@@ -55,13 +57,15 @@ class Process:
             if db_connection.is_connected():
                 print('DB Connection Successful')
                 print('Fetching Data Points')
-                sql_select_query = "SELECT latitude,longitude FROM reports.et_farm_gps where processed =0 ORDER BY id"
+                sql_select_query = "SELECT latitude,longitude FROM reports.et_farm_gps where processed =0 AND (latitude != 0.00000 AND longitude != 0.00000) ORDER BY id"
+
                 cursor = db_connection.cursor()
                 cursor.execute(sql_select_query)
                 records = cursor.fetchall()  # get all records
+
                 print(cursor.rowcount,'Data points Returned')
 
-                chunk_size = 2
+                chunk_size = 500
                 chunk_count = cursor.rowcount//chunk_size
                 counter = 0
                 # Split the records into smaller groups
@@ -74,6 +78,7 @@ class Process:
                 for chunk in chunks:
                     counter+=counter+1
                     print ('Processing Chunk')
+
                     # Convert the coordinates to floats
                     converted_chunk = [(float(coord[0]), float(coord[1])) for coord in chunk]
                     # print(converted_chunk)
@@ -83,24 +88,16 @@ class Process:
                     insert_query = "INSERT INTO reports.et_elevation_data (elevation, latitude, longitude) VALUES (%s, %s, %s)"
 
                     # Extract values from the data and create a list of tuples
-                    insert_data = [(elevation_result['elevation'], elevation_result['location']['lat'], elevation_result['location']['lng']) for elevation_result in
+                    insert_data = [(elevation_result['elevation'], "{:.5f}".format(elevation_result['location']['lat']), "{:.5f}".format(elevation_result['location']['lng'])) for elevation_result in
                                    elevation_results]
                     # Execute the insert query with the list of tuples
                     cursor.executemany(insert_query, insert_data)
                     db_connection.commit()
 
-                    # round off longitude & latitude to 5 decimal points
-                    update_round_off_lon_lat = 'update reports.et_elevation_data set longitude = round(longitude,5),latitude = round(latitude,5)'
-                    cursor.execute(update_round_off_lon_lat)
-                    db_connection.commit()
-
                     # Flag records as processed
-                    update_processed = 'update reports.et_farm_gps a join reports.et_elevation_data b on a.longitude = b.longitude and a.latitude= b.latitude and a.processed =0 set a.processed = 1'
+                    update_processed = 'update reports.et_farm_gps a join reports.et_elevation_data b on a.longitude = b.longitude and a.latitude= b.latitude and a.processed =0 set a.processed = 1;'
                     cursor.execute(update_processed)
                     db_connection.commit()
-
-                    # 'update reports.gps_mapping a join reports.et_elevation_data b on a.longitude = b.longitude and a.latitude= b.latitude set a.elevation = b.elevation'
-
 
         except Error as e:
             print("Error while connecting to MySQL", e)
@@ -108,6 +105,51 @@ class Process:
             print('Closing DB Connection')
             if db_connection.is_connected():
                 cursor.close()
+                db_connection.close()
+                print('DB Connection Closed')
+
+    def prep(self):
+        try:
+            print('Establish DB Connection')
+            db_connection = mysql.connector.connect(host=self.host, database=self.database, user=self.user,
+                                                 password=self.password)
+            cursor = db_connection.cursor()
+
+
+            if db_connection.is_connected():
+                print('DB Connection Successful')
+
+                print('Truncate staging Tables')
+                truncate_gps_mapping_table = "truncate table  reports.gps_mapping;"
+                cursor.execute(truncate_gps_mapping_table)
+                db_connection.commit()
+
+                truncate_et_farm_gps = "truncate table reports.et_farm_gps;"
+                cursor.execute(truncate_et_farm_gps)
+                db_connection.commit()
+
+                truncate_et_elevation_data = "truncate table reports.et_elevation_data;"
+                cursor.execute(truncate_et_elevation_data)
+                db_connection.commit()
+
+                print('Stage GPS Data + Event ID ')
+                insert_stage_evnt_data = ("insert into reports.gps_mapping(event_id,latitude,longitude) select id,TRUNCATE(latitude,5),"
+                                          "TRUNCATE(longitude,5) from adgg_uat.core_animal_event where country_id= 12 and event_type = 2 "
+                                          "and latitude is not null and longitude is not null;")
+                cursor.execute(insert_stage_evnt_data)
+                db_connection.commit()
+
+                print('Get Unique GPS From Staged GPS Data and Store')
+                insert_unique_gps = "insert into reports.et_farm_gps(latitude,longitude) select distinct latitude,longitude from reports.gps_mapping;"
+                cursor.execute(insert_unique_gps)
+                db_connection.commit()
+
+        except Error as e:
+            print("Error while connecting to MySQL", e)
+        finally:
+            print('Closing DB Connection')
+            if db_connection.is_connected():
+                db_connection.commit()
                 db_connection.close()
                 print('DB Connection Closed')
     def merge(self):
@@ -120,40 +162,32 @@ class Process:
             if db_connection.is_connected():
                 print('DB Connection Successful')
 
-                print('Fetch Mapping Data')
-                query_gps_mapping = "SELECT id,event_id,longitude,latitude,elevation FROM reports.gps_mapping"
-                gps_mapping = pd.read_sql(query_gps_mapping, db_connection)
+                print('Fetch Elevation Data')
+                query_elevation = "SELECT longitude,latitude,elevation FROM reports.et_elevation_data"
+                df_elevation = pd.read_sql(query_elevation, db_connection)
 
-                # print('Fetch Elevation Data')
-                # query_elevation = "SELECT longitude,latitude, elevation FROM reports.et_elevation_data"
-                # elevation =pd.read_sql(query_elevation, db_connection)
-                #
-                # merged_data = gps_mapping.merge(elevation, on=['longitude', 'latitude'], how='inner')
-                # gps_mapping['elevation'] = merged_data['elevation']
+                print('Fetch Events Mapping Data')
+                query_events_mapping = "SELECT event_id,longitude,latitude FROM reports.gps_mapping"
+                df_events = pd.read_sql(query_events_mapping, db_connection)
 
+                print('Merge Elevation Data With Events IDs')
+                merged_data = df_elevation.merge(df_events, on=['longitude', 'latitude'], how='inner')
+                df_events['elevation'] = merged_data['elevation']
+
+                print("Load Test Day CSV file into a DataFrame")
                 csv_file_path = '/home/kosgei/Desktop/testday_lactation_combined_output.csv'
-                # Load the CSV file into a DataFrame
-                test_day = pd.read_csv(csv_file_path)
-                # merged_test_day_data = test_day.merge(gps_mapping, on=['event_id', 'event_id'], how='left')
-                merged_test_day_data = pd.merge(test_day, gps_mapping, on='event_id', how='left')
-                test_day['elevation'] = merged_test_day_data['elevation']
+                df_test_day = pd.read_csv(csv_file_path)
 
+                print('Merge Elevation Data With Test Day Data Using Event ID')
+                merged_test_day_data = pd.merge(df_test_day, df_events, on='event_id', how='left')
+                df_test_day['elevation'] = merged_test_day_data['elevation']
+
+                print('Generate CSV Output')
                 now = datetime.now()
                 valid_output_csv = f"/home/kosgei/Desktop/testday-{now.strftime('%Y-%m-%d')}.csv"
                 valid_output_gz = f"{valid_output_csv}.gz"
-                self.gen_file(merged_test_day_data, valid_output_csv, valid_output_gz)
+                self.gen_file(df_test_day, valid_output_csv, valid_output_gz)
 
-
-
-                # cursor = db_connection.cursor()
-                # table_name = 'reports.event_elevation'
-                #
-                # insert_query = "INSERT INTO {} (event_id, longitude,latitude,elevation) VALUES (%s, %s, %s, %s)".format(table_name)
-                #
-                # # Iterate over DataFrame rows and insert data
-                # for index, row in gps_mapping.iterrows():
-                #     data_tuple = (row['event_id'], row['longitude'],row['latitude'],row['elevation'])
-                #     cursor.execute(insert_query, data_tuple)
 
         except Error as e:
             print("Error while connecting to MySQL", e)
@@ -166,5 +200,8 @@ class Process:
 
 
 if __name__ == '__main__':
+    # Process().prep()
     # Process().execute()
     Process().merge()
+
+
