@@ -1,4 +1,5 @@
-# altitude-generator
+# AltitudeMapper
+ Obtain elevation data from location details using the Google Elevation API
 
 ## set environment variables
 export DB_SCHEMA={insert here}
