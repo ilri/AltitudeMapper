@@ -205,7 +205,20 @@ class AltGen:
                 df_elevation = pd.read_sql(query_elevation,  self.conn)
 
                 print('Fetch Events Mapping Data')
-                query_events_mapping = "SELECT event_id,longitude,latitude FROM reports.alt_test_day_events"
+                query_events_mapping = """
+                    SELECT a.event_id,a.longitude,a.latitude,
+                    b.birthdate dob,d.label breed, 
+                    dam.id dam_id, dam.tag_id dam_tag_id, dam.birthdate dam_dob,f.label dam_breed ,
+                    sire.id sire_id, sire.tag_id sire_tag_id, sire.birthdate sire_dob,e.label sire_breed 
+                    FROM reports.alt_test_day_events a 
+                    join adgg_uat.core_animal_event c on a.event_id = c.id
+                    join adgg_uat.core_animal b ON c.animal_id= b.id 
+                    left join adgg_uat.core_master_list d on d.value = b.main_breed and d.list_type_id = 8
+                    left join adgg_uat.core_animal sire on sire.id = b.sire_id
+                    left join adgg_uat.core_animal dam on dam.id = b.dam_id
+                    left join adgg_uat.core_master_list e on e.value = sire.main_breed and e.list_type_id = 8
+                    left join adgg_uat.core_master_list f on f.value = dam.main_breed and f.list_type_id = 8
+                """
                 df_events = pd.read_sql(query_events_mapping,  self.conn)
 
                 print('Merge Elevation Data With Events IDs')
@@ -217,9 +230,8 @@ class AltGen:
                 df_test_day = pd.read_csv(csv_file_path)
 
                 print('Merge Elevation Data With Test Day Data Using Event ID')
-                merged_test_day_data = pd.merge(df_test_day, df_events, on='event_id', how='left')
-                df_test_day['elevation'] = merged_test_day_data['elevation']
-
+                merged_test_day_data = pd.merge(df_test_day, df_events[['dob', 'breed', 'sex','dam_id','elevation']], on='event_id', how='left')
+                # df_test_day['elevation'] = merged_test_day_data['elevation']
                 print('Generate CSV Output')
                 now = datetime.now()
                 valid_output_csv = f"/home/kosgei/Desktop/testday-{now.strftime('%Y-%m-%d')}.csv"
