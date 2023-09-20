@@ -208,8 +208,8 @@ class AltGen:
                 query_events_mapping = """
                     SELECT a.event_id,a.longitude,a.latitude,
                     b.birthdate dob,d.label breed, 
-                    dam.id dam_id, dam.tag_id dam_tag_id, dam.birthdate dam_dob,f.label dam_breed ,
-                    sire.id sire_id, sire.tag_id sire_tag_id, sire.birthdate sire_dob,e.label sire_breed 
+                    dam.id as dam_id, dam.tag_id dam_tag_id, dam.birthdate dam_dob,f.label dam_breed ,
+                    sire.id as sire_id, sire.tag_id sire_tag_id, sire.birthdate sire_dob,e.label sire_breed 
                     FROM reports.alt_test_day_events a 
                     join adgg_uat.core_animal_event c on a.event_id = c.id
                     join adgg_uat.core_animal b ON c.animal_id= b.id 
@@ -225,13 +225,25 @@ class AltGen:
                 merged_data = df_elevation.merge(df_events, on=['longitude', 'latitude'], how='inner')
                 df_events['elevation'] = merged_data['elevation']
 
+
                 print("Load Test Day CSV file into a DataFrame")
                 csv_file_path = '/home/kosgei/Desktop/testday_lactation_combined_output.csv'
                 df_test_day = pd.read_csv(csv_file_path)
 
                 print('Merge Elevation Data With Test Day Data Using Event ID')
-                merged_test_day_data = pd.merge(df_test_day, df_events[['dob', 'breed', 'sex','dam_id','elevation']], on='event_id', how='left')
-                # df_test_day['elevation'] = merged_test_day_data['elevation']
+                merged_test_day_data = pd.merge(df_test_day, df_events, on='event_id', how='left')
+                df_test_day['elevation'] = merged_test_day_data['elevation']
+                df_test_day['dob'] = merged_test_day_data['dob']
+                df_test_day['breed'] = merged_test_day_data['breed']
+                df_test_day['dam_id'] = merged_test_day_data['dam_id']
+                df_test_day['dam_tag_id'] = merged_test_day_data['dam_tag_id']
+                df_test_day['dam_dob'] = merged_test_day_data['dam_dob']
+                df_test_day['dam_breed'] = merged_test_day_data['dam_breed']
+                df_test_day['sire_id'] = merged_test_day_data['sire_id']
+                df_test_day['sire_tag_id'] = merged_test_day_data['sire_tag_id']
+                df_test_day['sire_dob'] = merged_test_day_data['sire_dob']
+                df_test_day['sire_breed'] = merged_test_day_data['sire_breed']
+
                 print('Generate CSV Output')
                 now = datetime.now()
                 valid_output_csv = f"/home/kosgei/Desktop/testday-{now.strftime('%Y-%m-%d')}.csv"
@@ -262,7 +274,7 @@ if __name__ == '__main__':
 
     #get unique GPS
     alt_gen.get_unique_gps()
-
+s
     #get elevation
     alt_gen.get_elevation()
 
